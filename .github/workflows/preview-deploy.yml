@@ -66,7 +66,11 @@ jobs:
         run: |
           ECR_URI="${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPO }}"
           TAG="${{ steps.branch-info.outputs.env_name }}"
-          docker build -t "$ECR_URI:$TAG" .
+          docker build -t "$ECR_URI:$TAG" \
+            --build-arg GIT_BRANCH="${{ steps.branch-info.outputs.branch }}" \
+            --build-arg GIT_SHA="${{ github.sha }}" \
+            --build-arg IMAGE_TAG="$TAG" \
+            .
           docker push "$ECR_URI:$TAG"
 
       - name: Check for matching feature group in other repo

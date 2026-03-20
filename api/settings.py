@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     debug: bool = False
     database_url: str = "postgresql://postgres:postgres@localhost:5432/appdb"
     api_token: str = "dev-token"
+    git_branch: str = "unknown"
+    git_sha: str = "unknown"
+    image_tag: str = "local"
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 

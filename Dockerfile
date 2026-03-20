@@ -19,6 +19,14 @@ COPY scripts/ ./scripts/
 COPY tests/ ./tests/
 COPY entrypoint.sh .
 
+# Build-time metadata baked into the image
+ARG GIT_BRANCH=unknown
+ARG GIT_SHA=unknown
+ARG IMAGE_TAG=local
+ENV GIT_BRANCH=$GIT_BRANCH
+ENV GIT_SHA=$GIT_SHA
+ENV IMAGE_TAG=$IMAGE_TAG
+
 EXPOSE 8000
 
 # Default: just start uvicorn. Set RUN_MIGRATIONS=true for ephemeral environments
