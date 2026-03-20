@@ -8,6 +8,10 @@ AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output t
 AWS_REGION     ?= us-east-1
 ECR_REPO       ?= $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/preview-service-alpha
 
+# Load .env.local if it exists
+ENV_FILE := $(shell [ -f .env.local ] && echo "--env-file .env.local")
+DC := docker compose $(ENV_FILE)
+
 # ============================================
 # Help
 # ============================================
@@ -23,39 +27,39 @@ help: ## Show available commands
 setup: build migrate seed ## First-time setup: build, migrate, and seed
 
 build: ## Build Docker image
-	docker compose build
+	$(DC) build
 
 up: ## Start the service
-	docker compose up
+	$(DC) up
 
 down: ## Stop the service
-	docker compose down
+	$(DC) down
 
 reset: ## Stop and wipe database volume
-	docker compose down -v
+	$(DC) down -v
 
 # ============================================
 # Database
 # ============================================
 
 migrate: ## Run migrations
-	docker compose run --rm migrate
+	$(DC) run --rm migrate
 
 migrations: ## Auto-generate a new migration (MESSAGE= required)
 	@if [ -z "$(MESSAGE)" ]; then \
 		echo "Error: MESSAGE is required. Usage: make migrations MESSAGE=\"add foo\""; \
 		exit 1; \
 	fi
-	docker compose run --rm migrate alembic revision --autogenerate -m "$(MESSAGE)"
+	$(DC) run --rm migrate alembic revision --autogenerate -m "$(MESSAGE)"
 
 seed: ## Seed the database with sample data
-	docker compose run --rm app python -m scripts.seed
+	$(DC) run --rm app python -m scripts.seed
 
 seed-nuke: ## Wipe and re-seed
-	docker compose run --rm app python -m scripts.seed --nuke
+	$(DC) run --rm app python -m scripts.seed --nuke
 
 shell-db: ## Open a psql shell
-	docker compose exec db psql -U postgres -d appdb
+	$(DC) exec db psql -U postgres -d appdb
 
 # ============================================
 # Quality

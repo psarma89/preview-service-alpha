@@ -11,6 +11,9 @@ FastAPI CRUD microservice for managing users.
 ## Quick Start
 
 ```bash
+# Set up local env (copy and customize)
+cp .env.local.example .env.local
+
 # First-time setup: build image, run migrations, seed sample data
 make setup
 
