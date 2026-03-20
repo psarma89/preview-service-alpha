@@ -7,7 +7,7 @@
 x-common-env: &common-env
   DATABASE_URL: postgresql://postgres:postgres@db:5432/appdb
   ENVIRONMENT: local
-  API_TOKEN: dev-token
+  API_TOKEN: ${API_TOKEN:-dev-token}
 
 services:
   db:
