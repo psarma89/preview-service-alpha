@@ -1,0 +1,53 @@
+# Triggers teardown of the ephemeral environment when a branch is deleted or merged.
+
+name: Teardown Preview Environment
+
+on:
+  delete:
+    branches-ignore:
+      - main
+      - master
+  pull_request:
+    types: [closed]
+
+env:
+  INFRA_REPO: psarma89/preview-infra
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute environment name
+        id: env-name
+        run: |
+          if [ "${{ github.event_name }}" = "delete" ]; then
+            BRANCH="${{ github.event.ref }}"
+          else
+            BRANCH="${{ github.head_ref }}"
+          fi
+
+          # Same group extraction logic as deploy workflow
+          GROUP=$(echo "$BRANCH" | grep -oP '^(feat|feature)/\K[^/]+' || true)
+
+          if [ -n "$GROUP" ]; then
+            ENV_NAME=$(echo "$GROUP" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-40)
+          else
+            ENV_NAME=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-40)
+          fi
+
+          echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger infrastructure teardown
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          curl -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ env.INFRA_REPO }}/dispatches" \
+            -d '{
+              "event_type": "teardown-ephemeral",
+              "client_payload": {
+                "env_name": "${{ steps.env-name.outputs.env_name }}"
+              }
+            }'

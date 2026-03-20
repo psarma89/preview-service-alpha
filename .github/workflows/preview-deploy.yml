@@ -1,0 +1,136 @@
+# Builds service-alpha and deploys an ephemeral preview environment.
+#
+# Feature-group logic:
+#   Branch naming convention: feat/<group>/<description>
+#   The <group> segment links branches across repos into a single environment.
+#   e.g. feat/checkout/add-form (alpha) + feat/checkout/update-api (beta) → one env
+#   Branches without a group segment (e.g. fix/typo) get their own standalone env.
+
+name: Deploy Preview Environment
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - master
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REPO: preview-service-alpha
+  OTHER_REPO: psarma89/preview-service-beta
+  INFRA_REPO: psarma89/preview-infra
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Parse branch and feature group
+        id: branch-info
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+          # Extract feature group from branch prefix: feat/<group>/... → group
+          # Branches without a group segment use the full sanitized branch name
+          GROUP=$(echo "$BRANCH" | grep -oP '^(feat|feature)/\K[^/]+' || true)
+
+          if [ -n "$GROUP" ]; then
+            ENV_NAME=$(echo "$GROUP" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-40)
+            echo "feature_group=$GROUP" >> "$GITHUB_OUTPUT"
+          else
+            ENV_NAME=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-40)
+          fi
+
+          echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
+          echo "Branch: $BRANCH → env: $ENV_NAME (group: ${GROUP:-none})"
+
+      - name: Build and push image
+        run: |
+          ECR_URI="${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPO }}"
+          TAG="${{ steps.branch-info.outputs.env_name }}"
+          docker build -t "$ECR_URI:$TAG" .
+          docker push "$ECR_URI:$TAG"
+
+      - name: Check for matching feature group in other repo
+        id: check-other
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          GROUP="${{ steps.branch-info.outputs.feature_group }}"
+          TAG="${{ steps.branch-info.outputs.env_name }}"
+
+          if [ -z "$GROUP" ]; then
+            # No feature group — standalone env, other service uses main
+            echo "beta_tag=main" >> "$GITHUB_OUTPUT"
+            echo "No feature group — standalone environment"
+            exit 0
+          fi
+
+          # Search for any branch in the other repo matching feat/<group>/*
+          BRANCHES=$(curl -s \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${{ env.OTHER_REPO }}/branches?per_page=100" \
+            | python3 -c "
+          import sys, json
+          branches = json.load(sys.stdin)
+          matches = [b['name'] for b in branches if b['name'].startswith(('feat/$GROUP/', 'feature/$GROUP/'))]
+          print(matches[0] if matches else '')
+          ")
+
+          if [ -n "$BRANCHES" ]; then
+            echo "beta_tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "Found matching feature group '$GROUP' in ${{ env.OTHER_REPO }}: $BRANCHES"
+          else
+            echo "beta_tag=main" >> "$GITHUB_OUTPUT"
+            echo "No matching feature group '$GROUP' in ${{ env.OTHER_REPO }}"
+          fi
+
+      - name: Trigger infrastructure deploy
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          curl -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ env.INFRA_REPO }}/dispatches" \
+            -d '{
+              "event_type": "deploy-ephemeral",
+              "client_payload": {
+                "env_name": "${{ steps.branch-info.outputs.env_name }}",
+                "alpha_tag": "${{ steps.branch-info.outputs.env_name }}",
+                "beta_tag": "${{ steps.check-other.outputs.beta_tag }}"
+              }
+            }'
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv pip install --system ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: python -m pytest tests/ -v
