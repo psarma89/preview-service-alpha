@@ -16,6 +16,7 @@ env:
 jobs:
   teardown:
     runs-on: ubuntu-latest
+    environment: prod
     steps:
       - name: Compute environment name
         id: env-name
